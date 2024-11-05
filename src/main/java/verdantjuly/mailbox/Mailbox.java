@@ -153,7 +153,7 @@ public class Mailbox extends JavaPlugin implements Listener {
                 List<String> itemList = new ArrayList<>();
                 boolean allItemsTransferred = true;
 
-                // 발송 GUI의 마지막 줄(겉날개와 같은 줄) 아이템을 수신자 우체통으로 전송
+                // 발송 GUI의 마지막 줄(겉날개와 같은 줄) 아이템을 수신자 우체통으로 전송합니다.
                 for (int i = 0; i < event.getClickedInventory().getSize(); i++) {
                         ItemStack item = event.getClickedInventory().getItem(i);
                         if (item != null && item.getType() != Material.ELYTRA) {
