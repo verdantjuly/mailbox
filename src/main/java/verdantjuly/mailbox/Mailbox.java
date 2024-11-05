@@ -1,4 +1,5 @@
 package verdantjuly.mailbox;
+
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -16,7 +17,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.BookMeta;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -27,8 +28,9 @@ import java.util.Map;
 
 public class Mailbox extends JavaPlugin implements Listener {
 
-    private static final String INVENTORY_TITLE = "우체통 - 아이템 전송";
+    private static final String INVENTORY_TITLE = "우편 발송";
     private final Map<Player, Location> mailboxes = new HashMap<>();
+    private final Map<Player, Player> pendingReceivers = new HashMap<>();
 
     @Override
     public void onEnable() {
@@ -52,24 +54,141 @@ public class Mailbox extends JavaPlugin implements Listener {
                 sender.sendMessage("플레이어만 이 명령어를 사용할 수 있습니다.");
                 return true;
             }
+        } else if (command.getName().equalsIgnoreCase("우편발송")) {
+            if (sender instanceof Player) {
+                Player player = (Player) sender;
+                if (args.length == 1) {
+                    Player receiver = Bukkit.getPlayer(args[0]);
+                    if (receiver != null && receiver.isOnline()) {
+                        openSendMailGUI(player, receiver);
+                        pendingReceivers.put(player, receiver);  // 수신자 저장
+                    } else {
+                        player.sendMessage("수신자를 찾을 수 없습니다.");
+                    }
+                } else {
+                    player.sendMessage("사용법: /우편발송 <수신자>");
+                }
+                return true;
+            } else {
+                sender.sendMessage("플레이어만 이 명령어를 사용할 수 있습니다.");
+                return true;
+            }
         }
         return false;
     }
 
     private void createMailbox(Player player) {
+        // 플레이어의 우체통이 이미 존재하는지 확인
+        if (mailboxes.containsKey(player)) {
+            Location existingLocation = mailboxes.get(player);
+            Block existingBlock = existingLocation.getBlock();
+
+            // 기존 우체통이 상자로 존재하는지 추가 확인
+            if (existingBlock.getType() == Material.CHEST) {
+                player.sendMessage("이미 우체통이 존재합니다. 위치: "
+                        + existingLocation.getBlockX() + ", "
+                        + existingLocation.getBlockY() + ", "
+                        + existingLocation.getBlockZ());
+                return;  // 중복 생성 방지
+            } else {
+                // 만약 기존 위치에 상자가 없다면 우체통 정보 제거
+                mailboxes.remove(player);
+            }
+        }
+
+        // 새 우체통 생성
         Location loc = player.getLocation().add(1, 0, 0);
-        Block block = loc.getBlock();
+        loc.getBlock().setType(Material.CHEST);
+        Chest chest = (Chest) loc.getBlock().getState();
+        chest.setCustomName(player.getName() + "님의 우체통");
+        chest.update();
 
-        if (block.getType() != Material.CHEST) {
-            block.setType(Material.CHEST);
-            Chest chest = (Chest) block.getState();
-            chest.setCustomName(player.getName() + "님의 우체통");
-            chest.update();
+        mailboxes.put(player, loc);  // 새 우체통 위치 저장
+        player.sendMessage("새 우체통이 생성되었습니다! 위치: "
+                + loc.getBlockX() + ", "
+                + loc.getBlockY() + ", "
+                + loc.getBlockZ());
+    }
 
-            mailboxes.put(player, loc);  // 플레이어의 우체통 위치 저장
-            player.sendMessage("우체통이 생성되었습니다!");
-        } else {
-            player.sendMessage("이 위치에 이미 우체통이 있습니다.");
+    private void openSendMailGUI(Player player, Player receiver) {
+        Inventory sendMailInventory = Bukkit.createInventory(null, 9, Component.text(INVENTORY_TITLE));
+
+        // 전송 버튼 설정
+        ItemStack sendButton = new ItemStack(Material.ELYTRA);
+        var sendMeta = sendButton.getItemMeta();
+        if (sendMeta != null) {
+            sendMeta.displayName(Component.text("전송"));
+            sendButton.setItemMeta(sendMeta);
+        }
+
+        sendMailInventory.setItem(8, sendButton); // 마지막 칸에 전송 버튼
+        player.openInventory(sendMailInventory);
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        HumanEntity entity = event.getWhoClicked();
+        if (!(entity instanceof Player player)) return;
+
+        // 발송 GUI 인벤토리인지 확인
+        if (event.getView().title().equals(Component.text(INVENTORY_TITLE))) {
+
+            // "전송" 버튼을 클릭했을 때
+            if (event.getCurrentItem() != null && event.getCurrentItem().getType() == Material.ELYTRA) {
+                Player receiver = pendingReceivers.get(player);  // 수신자 확인
+                if (receiver == null) {
+                    player.sendMessage("수신자를 찾을 수 없습니다.");
+                    return;
+                }
+
+                Location mailboxLocation = mailboxes.get(receiver);  // 수신자 우체통 위치 확인
+                if (mailboxLocation == null) {
+                    player.sendMessage(receiver.getName() + "님의 우체통이 존재하지 않아 전송할 수 없습니다.");
+                    return;
+                }
+
+                // 수신자 우체통 상자와 인벤토리 가져오기
+                Chest mailboxChest = (Chest) mailboxLocation.getBlock().getState();
+                Inventory receiverInventory = mailboxChest.getInventory();
+                List<String> itemList = new ArrayList<>();
+                boolean allItemsTransferred = true;
+
+                // 발송 GUI의 마지막 줄(겉날개와 같은 줄) 아이템을 수신자 우체통으로 전송
+                for (int i = 0; i < event.getClickedInventory().getSize(); i++) {
+                        ItemStack item = event.getClickedInventory().getItem(i);
+                        if (item != null && item.getType() != Material.ELYTRA) {
+                            itemList.add(item.getType() + " x " + item.getAmount());
+                            HashMap<Integer, ItemStack> remainingItems = receiverInventory.addItem(item); // 수신자 인벤토리에 아이템 추가 시도
+
+                            // 수신자 우체통에 남은 공간이 부족할 경우 처리
+                            if (!remainingItems.isEmpty()) {
+                                allItemsTransferred = false;
+                                player.sendMessage(receiver.getName() + "님의 우체통에 공간이 부족하여 일부 아이템이 전송되지 않았습니다.");
+                                break;
+                            }
+                            event.getClickedInventory().clear(i);  // 발송 GUI 인벤토리에서 아이템 제거
+                        }
+                }
+
+                // 종이 아이템 생성 및 추가
+                if (allItemsTransferred) {
+                    ItemStack paper = new ItemStack(Material.PAPER);  // 종이 아이템으로 편지 생성
+                    ItemMeta meta = paper.getItemMeta();
+                    meta.setDisplayName("우체통 편지");
+                    List<String> lore = new ArrayList<>();
+                    lore.add("발송자: " + player.getName());
+                    lore.add("내용:");
+                    lore.addAll(itemList);  // 발송된 아이템 목록을 내용으로 추가
+                    meta.setLore(lore);
+                    paper.setItemMeta(meta);
+
+                    receiverInventory.addItem(paper);  // 수신자 우체통에 편지(종이)를 추가
+                    player.sendMessage(receiver.getName() + "님의 우체통으로 아이템이 성공적으로 전송되었습니다!");
+                }
+
+                pendingReceivers.remove(player);  // 발송 완료 후 수신자 정보 제거
+                player.closeInventory();  // 발송 GUI 닫기
+            }
         }
     }
 
@@ -79,76 +198,8 @@ public class Mailbox extends JavaPlugin implements Listener {
             Chest chest = (Chest) event.getClickedBlock().getState();
             if (chest.getCustomName() != null && chest.getCustomName().contains("우체통")) {
                 event.setCancelled(true);
-                openMailboxGUI(event.getPlayer());
-            }
-        }
-    }
-
-    private void openMailboxGUI(Player player) {
-        Inventory mailboxInventory = Bukkit.createInventory(null, 9, Component.text(INVENTORY_TITLE));
-
-        // 전송 버튼 설정
-        ItemStack sendButton = new ItemStack(Material.ELYTRA);  // 겉날개로 설정
-        sendButton.getItemMeta().displayName(Component.text("전송"));
-
-        // GUI에 전송 버튼 배치
-        mailboxInventory.setItem(8, sendButton); // 마지막 칸에 전송 버튼
-
-        player.openInventory(mailboxInventory);
-    }
-
-    @EventHandler
-    public void onInventoryClick(InventoryClickEvent event) {
-        HumanEntity entity = event.getWhoClicked();
-        if (!(entity instanceof Player player)) return;
-
-        Inventory inventory = event.getClickedInventory();
-        if (inventory != null && event.getView().title().equals(Component.text(INVENTORY_TITLE))) {
-            event.setCancelled(true);  // 아이템 이동 막기
-
-            if (event.getCurrentItem() != null && event.getCurrentItem().getType() == Material.ELYTRA) {
-                // 전송 버튼을 클릭했을 때
-                Player receiver = Bukkit.getPlayer("receiver"); // 수신자 지정 (예시: "receiver")
-                if (receiver == null || !receiver.isOnline()) {
-                    player.sendMessage("대상 플레이어를 찾을 수 없습니다.");
-                    return;
-                }
-
-                Location mailboxLocation = mailboxes.get(receiver);
-                if (mailboxLocation == null) {
-                    // 수신자의 우체통이 없을 경우 전송 불가 메시지 출력
-                    player.sendMessage(receiver.getName() + "님의 우체통이 존재하지 않아 전송할 수 없습니다.");
-                    return;
-                }
-
-                Chest mailboxChest = (Chest) mailboxLocation.getBlock().getState();
-                Inventory receiverInventory = mailboxChest.getInventory();
-                List<String> itemList = new ArrayList<>();
-
-                // 전송할 아이템을 수신자의 우체통으로 이동
-                for (int i = 0; i < 8; i++) {  // 전송 버튼 제외한 첫 8칸의 아이템
-                    ItemStack item = inventory.getItem(i);
-                    if (item != null) {
-                        itemList.add(item.getType() + " x " + item.getAmount());
-                        receiverInventory.addItem(item);
-                    }
-                }
-
-                // 편지 아이템 생성
-                ItemStack letter = new ItemStack(Material.WRITABLE_BOOK);
-                BookMeta meta = (BookMeta) letter.getItemMeta();
-                meta.setTitle("우체통 편지");
-                meta.setAuthor(player.getName());
-                meta.addPage(String.join("\n", itemList));
-                letter.setItemMeta(meta);
-
-                // 수신자의 우체통에 편지 추가
-                receiverInventory.addItem(letter);
-                player.sendMessage(receiver.getName() + "님의 우체통으로 아이템을 성공적으로 전송했습니다!");
-
-                entity.closeInventory();
+                event.getPlayer().openInventory(chest.getInventory());
             }
         }
     }
 }
-

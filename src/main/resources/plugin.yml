@@ -1,0 +1,12 @@
+name: mailbox
+version: '1.0-SNAPSHOT'
+main: verdantjuly.mailbox.Mailbox
+api-version: '1.21'
+commands:
+  우체통생성:
+    description: 우체통을 생성합니다.
+    usage: /우체통생성
+
+  우편발송:
+    description: 우편을 발송합니다.
+    usage: /우편발송
